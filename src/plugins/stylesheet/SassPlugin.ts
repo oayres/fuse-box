@@ -1,6 +1,7 @@
 import { File } from "../../core/File";
 import { WorkFlowContext, Plugin } from "../../core/WorkflowContext";
 import * as path from "path";
+import * as fs from "fs";
 import { Config } from "../../Config";
 
 export interface SassPluginOptions {
@@ -9,6 +10,7 @@ export interface SassPluginOptions {
     importer?: boolean | ImporterFunc;
     cache?: boolean;
     indentedSyntax?: boolean,
+    resources?: string[],
     functions?: { [key: string]: (...args: any[]) => any }
 }
 
@@ -16,7 +18,8 @@ export interface ImporterFunc {
     (url: string, prev: string, done: (opts: { url?: string; file?: string; }) => any): any;
 }
 
-let sass;
+let sass, sassResources;
+const importRegexp = /@import\s+(?:'([^']+)'|"([^"]+)"|([^\s;]+))/g;
 
 /**
  * @export
@@ -34,6 +37,59 @@ export class SassPluginClass implements Plugin {
         context.allowExtension(".scss");
         context.allowExtension(".sass");
         this.context = context;
+
+    }
+
+    public read(file: String, contents:String = ''): String {
+        const parts = file.split('/');
+        let fileName = parts.pop();
+
+        if (!fileName.includes('.')) {
+            file += '.scss'
+        }
+
+        let currentContents = this.fetchFile(file)
+        const sassImports = currentContents.match(importRegexp);
+
+        if (sassImports && sassImports.length) {
+            sassImports.forEach(importStatement => {
+                let pathToRead;
+                const pathInImport = importStatement.replace('@import ', '').trim().slice(1, -1) || '';
+
+                if (pathInImport.length && pathInImport[0] !== '/') {
+                    const directoryOfFile = parts.join('/').replace(process.cwd(), '');
+                    pathToRead = path.join(process.cwd(), '/' + directoryOfFile + '/' + pathInImport);
+                } else {
+                    pathToRead = pathInImport;
+                }
+
+                currentContents = currentContents.replace(`${importStatement};`, '').trim()
+                currentContents.replace(/\r?\n|\r/g, '');
+                currentContents = `${currentContents}${this.read(pathToRead, contents)}`;
+            });
+        }
+
+        return `${contents}${currentContents}`;
+    }
+
+    public fetchFile(path: String): String {
+        let currentContents = '';
+
+        try {
+            currentContents = fs.readFileSync(path, 'utf8');
+        } catch (err) {
+            if (err.code === 'ENOENT') {
+                console.log('File not found! Trying to resolve SASS extension instead.');
+                
+                try {
+                    currentContents = fs.readFileSync(path.replace('.scss', '.sass'), 'utf8')
+                } catch (err) {}
+            } else {
+                throw err;
+            }
+        }
+
+        return currentContents;
     }
 
     public transform(file: File): Promise<any> {
@@ -49,8 +105,9 @@ export class SassPluginClass implements Plugin {
             return;
         }
 
-        if (!sass) { sass = require("node-sass"); }
-
+        if (!sass) {
+            sass = require("node-sass");
+        }
 
         const defaultMacro = {
             "$homeDir": file.context.homeDir,
@@ -59,7 +116,7 @@ export class SassPluginClass implements Plugin {
         };
 
         const options = Object.assign({
-            data: file.contents,
+            data: sassResources ? sassResources + file.contents : file.contents,
             file: context.homeDir+"/"+file.info.fuseBoxPath,
             sourceMap: true,
             outFile: file.info.fuseBoxPath,
