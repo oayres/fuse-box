@@ -83,6 +83,19 @@ fuse.plugin(
 )
 ```
 
+In order to use Sass resources for all processed stylesheets set `resources` option:
+
+```js
+fuse.plugin(
+    SassPlugin({
+        resources: [
+            '/path/to/resources/mixins.scss',
+            './another/sass/example/variables.scss'
+        ]
+    })
+)
+```
+
 ## Macros
 
 Macros is a unique feature available only in `FuseBox` to give you more flexibility on how to define paths for importing files in `SASS` . To enable macros add:
